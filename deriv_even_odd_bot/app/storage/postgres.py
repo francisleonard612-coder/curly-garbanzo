@@ -54,7 +54,21 @@ def _connect(dsn: str):
     # the moment it returns. An open transaction spanning ticks would mean a
     # crash loses an unknown number of decisions, including the one that
     # opened a contract.
-    return psycopg.connect(dsn, autocommit=True, connect_timeout=10)
+    #
+    # prepare_threshold=None: this connects through Supabase's pooled port
+    # (6543, PgBouncer in transaction-pooling mode -- see module docstring).
+    # PgBouncer in that mode does not support server-side prepared
+    # statements: each logical psycopg connection can be handed a different
+    # backend connection between statements, so a name psycopg prepared on
+    # one backend does not exist -- or collides with one of the same
+    # generated name -- on the next. psycopg3 auto-prepares any statement
+    # once it has been executed `prepare_threshold` times (default 5), which
+    # is exactly what record_decision() and record_model_performance() do on
+    # every tick/maintenance cycle. Setting this to None disables client-side
+    # prepared statements entirely, which is the standard fix for pooled
+    # Postgres connections (matches Supabase's own guidance for port 6543).
+    return psycopg.connect(
+        dsn, autocommit=True, connect_timeout=10, prepare_threshold=None)
 
 
 class PostgresDatabase:
