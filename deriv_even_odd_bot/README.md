@@ -92,7 +92,7 @@ python -m app.main            # research mode: never calls BUY
 Run the tests:
 
 ```bash
-pytest tests/ -q              # 122 tests
+pytest tests/ -q              # 154 tests
 ```
 
 ---
@@ -248,6 +248,12 @@ observed live in a sibling bot — at factor 2.0 that is a 4,096x stake.
 | Quality gate created a permanent self-sustaining lockout | probe mechanism, streak resets only on a real settlement |
 | Decay-ceiling: effective counts approach `1/(1-decay)` from below and never reach it, pinning gates at zero forever | documented in `tick_store.py`; `effective_n` and `ceiling` both exposed |
 | Retried buy opened two contracts | idempotency key + `BuyAmbiguousError` forces reconciliation, never retry |
+| Legacy connect-then-authorize produced handshake 401s | REST OTP exchange for a pre-authenticated WS URL (`DERIV_AUTH_MODE=otp`) |
+| `proposal`/`buy`/`proposal_open_contract`/`sell` share ONE 360/min budget, not 360 each; dozens of rate-limit errors in a single second | client-side pacing to 300/min before sending |
+| Settlement polled every 1s for up to 120s — 120 requests against that shared budget for one position | subscribe once, consume pushes |
+| websockets 14+ removed `.closed`; reading it raised AttributeError right after every successful connect | `.state is WsState.OPEN` throughout |
+| Current Options API renamed `symbol` → `underlying_symbol` and rejects `product_type` | both handled; `barrier` omitted for DIGITEVEN/DIGITODD |
+| A trailing newline in a pasted API token 401s identically to a revoked one | settings strip; auth errors report token shape, never the token |
 | `emergency_stop` is a method and `emergency_stopped` is the flag; reading the former gives a truthy bound method and freezes the bot permanently | found by the smoke harness during this rewrite — 3,000/3,000 ticks refused with `NO_TRADE_EMERGENCY_STOP`; now reads the flag |
 
 ---

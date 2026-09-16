@@ -381,19 +381,35 @@ class WalkForwardReport:
         m = sum(vals) / len(vals)
         return math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
 
-    def sign_consistent(self) -> bool:
-        """THE TEST THAT MATTERS, and it is not the standard deviation.
+    #: Below this, a correlation is not worth acting on whatever its sign.
+    #: Explaining 0.25% of the variance in outcome is not a finding.
+    MIN_USEFUL_CORRELATION = 0.05
 
-        A score correlating -0.02, +0.03, -0.04 across blocks has a tiny sd
-        and is completely worthless: the sign does not survive from one block
-        to the next, so there is nothing to tune towards. A small sd around a
-        consistent sign is evidence; a small sd around a sign that flips is
-        noise with low variance, which is exactly what a fair stream produces.
+    def sign_consistent(self) -> bool:
+        """Does the score/outcome relationship reproduce across blocks?
+
+        TWO CONDITIONS, AND THE SECOND IS NOT OPTIONAL. The sign must hold
+        across every block, AND every block's magnitude must clear
+        MIN_USEFUL_CORRELATION.
+
+        The magnitude floor is here because sign alone is a coin flip. With
+        three blocks, a pure-noise series lands on a single sign 25% of the
+        time; with four, 12.5%. Reporting that as "consistent" would tell the
+        operator that re-weighting is defensible roughly one run in four on a
+        stream with no signal in it at all -- the precise failure this harness
+        exists to prevent. Observed on CSPRNG data: correlations of -0.001,
+        -0.009, -0.021, all negative, all meaningless.
+
+        Standard deviation is not the test either. A tiny sd around a sign
+        that flips is low-variance noise, and a tiny sd around +0.002 is
+        low-variance nothing.
         """
         vals = self._corrs()
         if len(vals) < 2:
             return False
-        return all(v > 0 for v in vals) or all(v < 0 for v in vals)
+        same_sign = all(v > 0 for v in vals) or all(v < 0 for v in vals)
+        strong_enough = all(abs(v) >= self.MIN_USEFUL_CORRELATION for v in vals)
+        return same_sign and strong_enough
 
     def report(self) -> str:
         L = ["#" * 72,
@@ -412,10 +428,15 @@ class WalkForwardReport:
         sd = self.stability()
         L.append(f"correlation stability (sd across blocks): {sd:.4f}")
         if not self.sign_consistent():
-            L.append("  -> SIGN FLIPS ACROSS BLOCKS. The opportunity score has no "
-                     "reproducible relationship to outcome here. Do NOT tune "
-                     "weights on this: any constant fitted to one block is "
-                     "fitted to that block's noise.")
+            vals = self._corrs()
+            weak = vals and all(abs(v) < self.MIN_USEFUL_CORRELATION for v in vals)
+            why = ("every block is below |{:.2f}|, which is nothing to tune "
+                   "towards even where the sign happens to agree"
+                   .format(self.MIN_USEFUL_CORRELATION) if weak
+                   else "the sign does not survive from one block to the next")
+            L.append(f"  -> NO REPRODUCIBLE SCORE/OUTCOME RELATIONSHIP: {why}. "
+                     f"Do NOT tune weights on this: any constant fitted to one "
+                     f"block is fitted to that block's noise.")
         elif sd == sd and sd > 0.05:
             L.append("  -> sign is consistent but the magnitude is not. Treat "
                      "as weak evidence and re-run on more blocks before acting.")

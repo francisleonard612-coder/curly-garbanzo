@@ -59,14 +59,46 @@ MODE_LIVE = "live"           # real money (Section 66)
 VALID_MODES = (MODE_RESEARCH, MODE_DEMO, MODE_LIVE)
 
 
+def _env_str(name: str, default: str) -> str:
+    """Strips surrounding whitespace.
+
+    A trailing newline pasted into a Railway variable is invisible in the
+    dashboard and produces a 401 that looks exactly like a revoked token.
+    """
+    v = os.getenv(name)
+    return default if v is None else v.strip()
+
+
 @dataclass
 class DerivSettings:
-    app_id: str = field(default_factory=lambda: os.getenv("DERIV_APP_ID", "1089"))
-    api_token: str = field(default_factory=lambda: os.getenv("DERIV_API_TOKEN", ""))
-    ws_url: str = field(default_factory=lambda: os.getenv(
+    app_id: str = field(default_factory=lambda: _env_str("DERIV_APP_ID", "1089"))
+    api_token: str = field(default_factory=lambda: _env_str("DERIV_API_TOKEN", ""))
+    ws_url: str = field(default_factory=lambda: _env_str(
         "DERIV_WS_URL", "wss://ws.derivws.com/websockets/v3"))
     use_real_account: bool = field(default_factory=lambda: _env_bool("DERIV_USE_REAL", False))
     request_timeout: float = field(default_factory=lambda: _env_float("DERIV_REQUEST_TIMEOUT", 15.0))
+
+    # --- REST OTP auth (client rule 5) ------------------------------------
+    # "otp" exchanges the API token for a pre-authenticated WebSocket URL via
+    # the Options REST API; "legacy" connects first and sends an authorize
+    # message. otp is the default because the legacy flow has produced
+    # handshake-time 401s on this account.
+    auth_mode: str = field(default_factory=lambda: _env_str("DERIV_AUTH_MODE", "otp"))
+    api_base_url: str = field(default_factory=lambda: _env_str(
+        "DERIV_API_BASE_URL", "https://api.derivws.com"))
+    # Pin a specific Options account, or leave blank to auto-resolve to demo
+    # or real according to use_real_account.
+    account_id: str = field(default_factory=lambda: _env_str("DERIV_ACCOUNT_ID", ""))
+    # Deriv's shared budget for {proposal, proposal_open_contract, buy, sell}
+    # is 360/min PER CONNECTION -- not 360 each. Held below that to leave
+    # headroom for buy and settlement traffic (client rule 6).
+    max_requests_per_minute: int = field(
+        default_factory=lambda: _env_int("DERIV_MAX_REQUESTS_PER_MINUTE", 300))
+
+    def __post_init__(self) -> None:
+        if self.auth_mode not in ("otp", "legacy"):
+            raise ConfigError(
+                f"DERIV_AUTH_MODE must be 'otp' or 'legacy', got {self.auth_mode!r}")
 
 
 class Settings:

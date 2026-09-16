@@ -54,9 +54,18 @@ class Bot:
         # is fine locally. On Railway the container filesystem is ephemeral,
         # so sqlite there means the decision history dies on every redeploy.
         self.db = open_database(sqlite_path=settings.db_path)
+        d = settings.deriv
         self.client = DerivClient(
-            app_id=settings.deriv.app_id, api_token=settings.deriv.api_token,
-            ws_url=settings.deriv.ws_url, request_timeout=settings.deriv.request_timeout)
+            app_id=d.app_id, api_token=d.api_token, ws_url=d.ws_url,
+            request_timeout=d.request_timeout,
+            api_base_url=d.api_base_url, auth_mode=d.auth_mode,
+            account_id=d.account_id or None,
+            # The client resolves demo vs real itself under OTP auth. It is
+            # the SAME flag the two-switch live guard reads, so the account
+            # the bot authenticates against can never disagree with the mode
+            # it believes it is running in.
+            use_real_account=d.use_real_account,
+            max_requests_per_minute=d.max_requests_per_minute)
         r = settings.risk
         self.risk = RiskManager(
             base_stake=r["base_stake"], max_stake=r["max_stake"],

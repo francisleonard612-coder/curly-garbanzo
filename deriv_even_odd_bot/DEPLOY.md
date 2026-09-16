@@ -55,6 +55,38 @@ before draining the old one, so during a rollout you briefly have two. Set
 **Settings → Deploy → Overlap: 0** (or accept the window only in `research`
 mode).
 
+### Auth, and what to do if it 401s
+
+The client defaults to the REST OTP exchange: it calls
+`/trading/v1/options/accounts` to resolve your demo or real account, then
+`/trading/v1/options/accounts/{id}/otp` to get a pre-authenticated WebSocket
+URL. The OTP is single-use and expires in **120 seconds**, so a fresh one is
+minted on every connect and every reconnect.
+
+If startup fails with `AuthFailed`, read the message before changing anything —
+it reports `token_len` and `token_has_surrounding_whitespace` (never the token
+itself). A trailing newline pasted into a Railway variable is invisible in the
+dashboard and produces a 401 identical to a revoked token. `DerivSettings` now
+strips both `DERIV_APP_ID` and `DERIV_API_TOKEN`, but the diagnostic stays
+because it distinguishes a locally malformed token from a genuinely rejected
+one.
+
+If the accounts endpoint returns 404 for your app_id, set
+`DERIV_AUTH_MODE=legacy`.
+
+### Rate limits
+
+Deriv counts `proposal`, `proposal_open_contract`, `buy` and `sell` against
+**one shared budget of 360 requests/minute per connection** — not 360 each.
+This engine requests a proposal on nearly every tick per symbol, so at two
+symbols the budget is gone in well under a minute without pacing. The client
+paces to 300/min before sending rather than absorbing rejections.
+
+A consequence worth knowing: **at two symbols the pacing is the binding
+constraint on evaluation rate, not the models.** `client.rate_limit_status()`
+reports how often and how long it has waited. If `waits` climbs steadily, add
+a proposal cache or reduce symbols rather than raising the cap.
+
 ### What a restart costs you
 
 Railway restarts containers — on deploy, on OOM, on platform maintenance. Every
@@ -101,6 +133,10 @@ Only the Supabase tables survive a restart. That is the entire reason for
 | `MIN_SAMPLES` | `2000` | Ticks before any trade is considered. |
 | `RANDOMNESS_ALPHA` | `0.01` | Family-wide alpha for the battery. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` is very chatty at ~2 ticks/sec. |
+| `DERIV_AUTH_MODE` | `otp` | `otp` exchanges the token for a pre-authenticated WS URL via the Options REST API. `legacy` sends an authorize message instead — use it if you are on app_id `1089` and the accounts endpoint 404s. |
+| `DERIV_API_BASE_URL` | `https://api.derivws.com` | REST base for the OTP exchange. Only used when `DERIV_AUTH_MODE=otp`. |
+| `DERIV_ACCOUNT_ID` | *(blank)* | Pin one Options account. Blank auto-resolves to demo or real from `DERIV_USE_REAL`. |
+| `DERIV_MAX_REQUESTS_PER_MINUTE` | `300` | Client-side pacing for Deriv's shared 360/min budget. Lower it if you see rate-limit errors; do not raise it. |
 | `CONFIG_PATH` | `config.yaml` | Everything in `config.yaml` is env-overridable. |
 | `TZ` | `Africa/Nairobi` | Only affects log timestamps and the daily-loss rollover boundary. |
 

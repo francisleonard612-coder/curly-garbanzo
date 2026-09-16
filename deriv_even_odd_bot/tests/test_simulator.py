@@ -39,6 +39,19 @@ def _factory():
     return SymbolPipeline("R_100", 0.1, _Settings())
 
 
+class _B:
+    """Minimal stand-in for a SimulationResult, for the report-level tests."""
+
+    def __init__(self, c):
+        self.score_outcome_correlation = c
+        self.n_trades = 0
+        self.wins = 0
+        self.pnl = 0.0
+
+    def report(self) -> str:
+        return f"stub block corr={self.score_outcome_correlation:+.4f}"
+
+
 # --------------------------------------------------------------------------
 # isolation: the simulator must not be able to deadlock or pollute the bot
 # --------------------------------------------------------------------------
@@ -144,9 +157,16 @@ def test_no_trades_and_no_reproducible_score_signal_on_a_fair_stream():
     rep = walk_forward(_factory, _digits(12000), n_blocks=4)
     assert rep.total_trades == 0
     assert rep.total_pnl == 0.0
-    assert not rep.sign_consistent(), (
-        "a CSPRNG stream produced a sign-consistent score/outcome "
-        "correlation; investigate for leakage before believing it")
+    # The stable claim is about MAGNITUDE, not sign. Sign alone is a coin
+    # flip across three blocks -- asserting on it would make this test fail
+    # a quarter of the time for no reason, which is how a real regression
+    # ends up being dismissed as "that flaky one".
+    for b in rep.blocks:
+        c = b.score_outcome_correlation
+        assert abs(c) < WalkForwardReport.MIN_USEFUL_CORRELATION, (
+            f"block correlated {c:+.4f} with outcome on a CSPRNG stream; "
+            f"investigate for leakage before believing it")
+    assert not rep.sign_consistent()
     assert "Do NOT tune weights" in rep.report()
 
 
@@ -169,15 +189,21 @@ def test_stability_distinguishes_sign_flip_from_low_variance():
     flip = WalkForwardReport()
     steady = WalkForwardReport()
 
-    class _B:
-        def __init__(self, c):
-            self.score_outcome_correlation = c
-            self.n_trades = 0
-            self.wins = 0
-            self.pnl = 0.0
-
     flip.blocks = [_B(-0.02), _B(0.03), _B(-0.04)]
     steady.blocks = [_B(0.21), _B(0.19), _B(0.24)]
     assert not flip.sign_consistent()
     assert steady.sign_consistent()
-    assert flip.stability() < steady.stability() or True  # sd is not the test
+    # sd is NOT the test. Both series sit under the same small sd, yet one
+    # is evidence and the other is noise -- so a threshold on sd alone
+    # cannot tell them apart, which is why sign_consistent() does not use it.
+    assert flip.stability() < 0.05
+    assert steady.stability() < 0.05
+
+
+def test_consistent_sign_with_negligible_magnitude_is_not_evidence():
+    """The 25%-of-the-time false positive the magnitude floor exists to
+    stop. All three negative, all three meaningless."""
+    rep = WalkForwardReport()
+    rep.blocks = [_B(-0.001), _B(-0.009), _B(-0.021)]
+    assert not rep.sign_consistent()
+    assert "nothing to tune towards" in rep.report()
