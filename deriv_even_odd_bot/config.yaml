@@ -1,0 +1,89 @@
+# Deriv Even/Odd engine configuration (spec Section 60).
+# Every value here is overridable by environment variable -- see
+# app/config/settings.py. No source edit is needed for ordinary changes.
+
+mode: research          # research | demo | live  (env: TRADING_MODE)
+currency: USD
+
+symbols:
+  - R_100
+  - 1HZ100V
+
+contract:
+  duration: 1
+  duration_unit: t      # Even/Odd settles on the next tick
+
+gating:
+  # --- HARD (these can veto; see app/execution/hard_gates.py) -------------
+  # Minimum ticks before ANY trade is considered.
+  min_samples: 2000
+  # Expected value, in currency, that a quoted contract must clear. This is
+  # the one economic condition that stays hard: Section 14 classifies a
+  # candidate with no economically valid edge as INVALID, and no opportunity
+  # score can make a negative-EV contract worth buying. Raising it above 0
+  # demands a margin; lowering it below 0 means paying to place bets.
+  min_expected_value: 0.0
+  # Seconds a proposal may age before it is refused.
+  max_proposal_age_seconds: 5.0
+
+  # --- SOFT (these shape the opportunity score; none of them veto) --------
+  # Score in [0,100] required to trade. Adaptive selectivity (Section 15) can
+  # raise this by up to 60% when model health degrades. Nothing lowers it --
+  # in particular, a long dry spell does not (Sections 15, 16).
+  min_opportunity_score: 62.0
+  # Score at or above which a candidate is STRONG rather than VALIDATED.
+  strong_opportunity_score: 80.0
+  # Below this a candidate is INVALID rather than BORDERLINE. Purely a
+  # labelling boundary for diagnostics; both wait.
+  borderline_threshold: 40.0
+  # Edge at which the edge contributor saturates at full marks. NOT a cutoff:
+  # half this edge still scores 0.5 there.
+  target_edge: 0.02
+
+  # --- anti-deadlock diagnostics (Section 16) -----------------------------
+  # After this much idle time AND this many idle ticks, the dashboard starts
+  # reporting a rejection diagnosis. It does not change any threshold.
+  idle_alert_seconds: 900.0
+  idle_alert_ticks: 2000
+  # Required edge over the break-even probability derived from the REAL
+  # quoted payout, measured at the LOWER confidence bound (Section 26).
+  min_edge: 0.02
+
+  # Retained for the walk-forward simulator and older analysis scripts. The
+  # live gate no longer reads these as cutoffs -- model agreement, interval
+  # width, calibration quality and parity consistency are now weighted
+  # contributors in app/evidence/opportunity.py (Sections 6, 13, 22).
+  min_model_agreement: 0.60
+  max_probability_uncertainty: 0.02
+  min_calibration_quality: 0.50
+  max_parity_inconsistency: 0.10
+  # Family-wide alpha for the randomness battery. 0.01, not 0.05: the
+  # battery runs continuously, so a loose alpha manufactures signal.
+  randomness_alpha: 0.01
+
+risk:
+  # FIXED currency amount. Never a percentage of balance at this layer --
+  # see the 527x incident documented in app/risk/staking.py.
+  base_stake: 1.0
+  max_stake: 5.0
+  max_daily_loss: 25.0
+  max_drawdown: 50.0
+  max_consecutive_losses: 8
+  max_trades_per_day: 200
+  max_concurrent_trades: 1
+  cooldown_seconds: 0.0
+  stale_tick_seconds: 30.0
+
+staking:
+  # fixed | percentage | kelly | martingale
+  # Martingale is available for completeness and DISABLED by default
+  # (Section 31). At negative expectancy it converts a slow bleed into a
+  # fast one -- a 12-loss streak was observed live in a sibling bot.
+  method: fixed
+  kelly_fraction: 0.25
+
+storage:
+  path: data/bot.db
+
+logging:
+  level: INFO
