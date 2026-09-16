@@ -55,6 +55,35 @@ before draining the old one, so during a rollout you briefly have two. Set
 **Settings → Deploy → Overlap: 0** (or accept the window only in `research`
 mode).
 
+### Martingale, and what "3 steps" actually means with the default stakes
+
+`config.yaml` ships with martingale **on**: escalates after 2 consecutive
+losses, for up to 3 steps, factor 2.0. At `base_stake=1.0` that is
+1 → 2 → 4 → 8 across steps 0-3 — except `max_stake` defaults to `5.0`, so
+step 3 **clips to 5.0**, not 8.0. That clip is not a bug; `max_stake` is the
+deliberate outer ceiling. But it does mean the progression as configured is
+really 1 → 2 → 4 → 5(capped), not 1 → 2 → 4 → 8, and the bot warns about this
+exact mismatch at startup (`martingale's uncapped step-3 stake would be 8.00
+... exceeds max_stake 5.00`). Read that warning rather than discovering the
+clip empirically. Raise `MAX_STAKE`, lower `STAKING_MARTINGALE_FACTOR`, or
+accept the clip — any of those is fine, but pick one deliberately.
+
+**What martingale does and does not do.** This instrument's break-even
+accuracy is 51.28% at a 1.95x payout; escalating the stake after a loss does
+not move that number, because it doesn't change which trades get taken —
+only how much a taken trade risks. What it changes is the *shape* of the P/L
+curve: frequent small recoveries, occasional sharper drawdowns when a streak
+outruns 3 steps. At negative expectancy that shape is worse in expectation,
+not better. That's not an argument against using it — it's a legitimate risk
+preference — but it's the reason `max_stake` and `MAX_DAILY_LOSS` stop being
+soft numbers once martingale is on: they're what actually bounds a losing
+streak now, since the stake itself no longer does.
+
+A settlement that times out (Deriv never confirms `is_sold`) is now treated
+as a loss for the escalation counter, not just for the P/L total — an
+earlier version updated one and not the other, which would have quietly
+under-counted the losing streak a martingale schedule depends on.
+
 ### Auth, and what to do if it 401s
 
 The client defaults to the REST OTP exchange: it calls
@@ -131,6 +160,11 @@ Only the Supabase tables survive a restart. That is the entire reason for
 | `MAX_DAILY_LOSS` | `25.0` | Triggers emergency stop, which does **not** auto-clear. |
 | `MAX_DRAWDOWN` | `50.0` | Same. |
 | `MIN_SAMPLES` | `2000` | Ticks before any trade is considered. |
+| `STAKING_METHOD` | `martingale` | `fixed` \| `percentage` \| `kelly` \| `martingale`. config.yaml ships with martingale on; see the martingale section below before your first deploy. |
+| `STAKING_MARTINGALE_ENABLED` | `true` | Double gate with `STAKING_METHOD=martingale` — both must agree, so a stray env var can only turn escalation off, never on by accident. |
+| `STAKING_MARTINGALE_TRIGGER_LOSSES` | `2` | Escalation starts on the trade placed right after this many consecutive losses. |
+| `STAKING_MARTINGALE_FACTOR` | `2.0` | Stake at step *n* = `base_stake * factor^n`. 2.0 is classic doubling. |
+| `STAKING_MARTINGALE_MAX_STEPS` | `3` | Escalation ceiling. Holds at the step-N stake after this many losses; only a WIN resets it, not reaching the ceiling. |
 | `RANDOMNESS_ALPHA` | `0.01` | Family-wide alpha for the battery. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` is very chatty at ~2 ticks/sec. |
 | `DERIV_AUTH_MODE` | `otp` | `otp` exchanges the token for a pre-authenticated WS URL via the Options REST API. `legacy` sends an authorize message instead — use it if you are on app_id `1089` and the accounts endpoint 404s. |
@@ -162,6 +196,34 @@ keep it that way.
 
 Run in this order. Do not skip to `live` because the earlier stages were quiet —
 quiet is the expected output.
+
+### If it crash-loops immediately after connecting
+
+**Confirmed on 2026-09-16 against a real demo account**, and already fixed in
+this build: the startup Section-1 verification (`contracts_for`) sent a
+`currency` field that this Options-API generation rejects
+(`InputValidationFailed: Properties not allowed: currency`), which correctly
+made every configured symbol fail availability, which correctly made
+`main.py` refuse to run — and Railway then restarted the container every
+~2–3 seconds until `restartPolicyMaxRetries` (10) was exhausted and the
+deployment sat permanently crashed. **No financial exposure occurred**: this
+happens before ticks are ever subscribed.
+
+This is a real pattern, not a one-off: `active_symbols` and `proposal` were
+already known to have the same class of drift (a rejected or renamed field),
+found the same way — by connecting for real and reading the response. If a
+fresh deploy crash-loops on startup, check the logs for
+`InputValidationFailed: Properties not allowed: <field>` before assuming
+anything about the trading logic. It means a request in `app/api/deriv_client.py`
+is sending a field this API generation no longer accepts. Drop the field,
+add a test, redeploy — see rule 9 in that file's module docstring for the
+pattern to follow.
+
+Railway's restart cadence during a crash loop is fast enough to be worth
+knowing about on its own: at ~2–3s per cycle, 10 retries burn through in well
+under a minute, after which the service shows as crashed rather than
+restarting indefinitely. Check the deploy logs immediately after the first
+deploy rather than assuming silence means it's running.
 
 1. **`research`, 24 hours.** Confirm ticks arrive, the calibrator fits, and
    `decisions` fills up. Then query:

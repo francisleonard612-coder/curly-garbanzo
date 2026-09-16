@@ -76,10 +76,35 @@ risk:
 
 staking:
   # fixed | percentage | kelly | martingale
-  # Martingale is available for completeness and DISABLED by default
-  # (Section 31). At negative expectancy it converts a slow bleed into a
-  # fast one -- a 12-loss streak was observed live in a sibling bot.
-  method: fixed
+  #
+  # MARTINGALE, ENABLED, AS REQUESTED: escalates the stake after 2
+  # consecutive losses, for up to 3 escalation steps, then holds at the
+  # step-3 stake (capped by max_stake below) until a win resets it to zero.
+  #
+  # THE MATH THIS DOES NOT CHANGE. This instrument's break-even accuracy is
+  # 51.28% at a 1.95x payout (see the top of README.md); martingale does not
+  # move that number. What it changes is the SHAPE of the outcome
+  # distribution: frequent small recoveries, occasional large losses when a
+  # streak outruns the 3-step ceiling. At negative expectancy that shape is
+  # worse in expectation, not better -- it converts a slow bleed into a
+  # sequence of small gains punctuated by sharp drawdowns. This is not a
+  # reason the setting is unavailable; it is the fact to have in view while
+  # choosing max_stake and max_daily_loss below, since martingale is what
+  # makes those two numbers load-bearing rather than theoretical.
+  method: martingale
+  martingale_enabled: true
+  # Trade placed immediately after the 2nd consecutive loss is the first
+  # escalated one. Losses 1 and 2 stake at base_stake.
+  martingale_trigger_losses: 2
+  # stake at step n = base_stake * martingale_factor**n. 2.0 is classic
+  # doubling -- at a 1.95x payout it recovers the prior stake and overshoots
+  # into a small profit rather than exactly breaking even.
+  martingale_factor: 2.0
+  # Escalation stops here (still subject to max_stake) and HOLDS rather than
+  # resetting -- a win is what resets the streak, not reaching this ceiling.
+  # Keep this well below risk.max_consecutive_losses (the hard trading
+  # stop), or the escalation ceiling and the hard stop engage together.
+  martingale_max_steps: 3
   kelly_fraction: 0.25
 
 storage:

@@ -77,7 +77,11 @@ class Bot:
         s = settings.staking
         self.staking = StakingEngine(
             method=s["method"], base_stake=r["base_stake"], max_stake=r["max_stake"],
-            kelly_fraction=s["kelly_fraction"])
+            kelly_fraction=s["kelly_fraction"],
+            martingale_enabled=s["martingale_enabled"],
+            martingale_factor=s["martingale_factor"],
+            martingale_max_steps=s["martingale_max_steps"],
+            min_consecutive_losses=s["martingale_trigger_losses"])
         self.dashboard = Dashboard(settings.mode)
         self.render = render
         self.pipelines: dict[str, SymbolPipeline] = {}
@@ -232,6 +236,16 @@ class Bot:
     async def _monitor(self, contract_id: int, decision) -> None:
         poc = await self.client.wait_for_settlement(contract_id)
         if not poc:
+            # Outcome is genuinely unknown -- the subscription went quiet
+            # rather than confirming is_sold. Recorded as a loss for pnl
+            # accounting because that is the conservative assumption, and
+            # register_result MUST agree: leaving the martingale/risk state
+            # un-updated here would desync it from what the trades table
+            # says happened, which is exactly the kind of mismatch that
+            # makes an escalating stake untrustworthy -- the very thing
+            # martingale needs most is an accurate loss-streak count.
+            self.risk.register_result(0.0)
+            self.staking.register_result(False)
             self.db.record_trade_result(contract_id, won=False, pnl=0.0,
                                         error="settlement timeout")
             return

@@ -79,6 +79,29 @@ Rise/Fall bot's connection layer, which has run this exact flow live.
    connect. requirements.txt pins `websockets>=12.0` with no upper bound,
    so any current environment hits this.
 
+9. THIS OPTIONS-API GENERATION HAS A STRICTER SCHEMA THAN THE ONE MOST
+   DOCUMENTATION AND OLDER CLIENTS ASSUME. Confirmed live, 2026-09-16,
+   against a real demo account: `contracts_for` rejects a `currency`
+   property with `InputValidationFailed: Properties not allowed: currency`.
+   Same family as `active_symbols`'s removed `product_type` and
+   `proposal`'s renamed `symbol` -> `underlying_symbol` -- each was found
+   the same way, by connecting for real and reading what came back. This
+   one reached a live demo deployment and crash-looped the process: the
+   Section 1 availability check failed for every configured symbol,
+   main.py correctly refused to run rather than trade blind, and Railway's
+   ON_FAILURE restart policy retried every ~2-3 seconds until its budget
+   was exhausted -- ticks were never subscribed, so there was no financial
+   exposure, but the deployment went to a permanently crashed state.
+   THE LESSON IS NOT "this one field is now fixed." It is that every
+   request shape in this file was written from documentation and ported
+   code, not from a confirmed live exchange, and the ones not yet listed
+   here have not been checked. Treat a fresh `InputValidationFailed:
+   Properties not allowed: X` from ANY request in this client as this same
+   class of bug, not as a caller error -- drop the offending property, add
+   a rule here recording what was sent and what came back, and add a test
+   pinning the corrected payload the way test_deriv_client.py does for
+   every rule above.
+
 ONE THING DELIBERATELY NOT PORTED FROM ASTRA: its client parses `quote`
 into a float and derives the digit itself. This engine keeps the quote as
 TEXT and extracts the digit in app/digits/extraction.py, because once
@@ -558,23 +581,65 @@ class DerivClient:
         return symbols
 
     async def contracts_for(self, symbol: str, currency: str = "USD") -> dict:
-        return await self._send({"contracts_for": symbol, "currency": currency})
+        """`currency` is accepted as a parameter for API-compat with callers
+        but is deliberately NOT sent in the request.
+
+        CONFIRMED LIVE, 2026-09-16, against a real demo account on this
+        Options-API generation (the one the OTP flow connects to):
+
+            > {"contracts_for": "R_100", "currency": "USD", "req_id": 3}
+            < InputValidationFailed: Properties not allowed: currency.
+
+        Same family of break as `active_symbols`'s removed `product_type`
+        and `proposal`'s renamed `symbol` -> `underlying_symbol` -- this API
+        generation has a stricter, narrower schema than the legacy one the
+        client code was originally written against. `contracts_for` takes
+        the symbol alone here; currency-specific limits, if needed later,
+        come back in the response regardless.
+
+        This shipped untested against the real endpoint and reached a live
+        demo account, where it crash-looped the process: the Section 1
+        availability check failed for every symbol, main.py correctly
+        refused to run rather than trade blind, and Railway's ON_FAILURE
+        restart policy retried every ~2-3 seconds until the retry budget in
+        railway.json was exhausted. No financial exposure at any point --
+        ticks were never subscribed -- but the deployment went to a
+        permanently crashed state. See DEPLOY.md's first-run checklist.
+        """
+        return await self._send({"contracts_for": symbol})
 
     async def verify_even_odd_available(self, symbol: str,
                                         currency: str = "USD") -> tuple[bool, str]:
         """Section 1: refuse to trade a contract that is not actually
         offered. Verified against the live API rather than assumed, because
-        an assumption here surfaces as a buy rejection mid-session."""
+        an assumption here surfaces as a buy rejection mid-session.
+
+        THE TWO FAILURE MODES ARE NOT THE SAME AND MUST NOT READ THE SAME.
+        "Deriv confirmed DIGITEVEN/DIGITODD are not offered on this symbol"
+        and "the contracts_for REQUEST failed, so nothing was confirmed
+        either way" used to both return `(False, "contracts_for failed:
+        ...")`, with no way to tell them apart from the log line. A live
+        deployment against R_75/R_100 -- both of which always offer
+        Even/Odd -- read the second case as the first, because the wording
+        made a request error sound like a negative determination about the
+        symbol. The trading decision (skip this symbol) is correct either
+        way and is unchanged here; only the wording is, so the two cases
+        are distinguishable in the logs.
+        """
         try:
             resp = await self.contracts_for(symbol, currency)
         except DerivAPIError as exc:
-            return False, f"contracts_for failed: {exc}"
+            return False, (f"{symbol}: contracts_for REQUEST FAILED ({exc}) -- "
+                           f"availability was never confirmed either way; "
+                           f"skipping this symbol out of caution, not because "
+                           f"Deriv said Even/Odd is unavailable")
         available = resp.get("contracts_for", {}).get("available", [])
         types = {c.get("contract_type") for c in available}
         missing = {"DIGITEVEN", "DIGITODD"} - types
         if missing:
-            return False, f"{symbol}: missing contract types {sorted(missing)}"
-        return True, f"{symbol}: DIGITEVEN and DIGITODD available"
+            return False, (f"{symbol}: Deriv CONFIRMED missing contract types "
+                           f"{sorted(missing)}")
+        return True, f"{symbol}: DIGITEVEN and DIGITODD confirmed available"
 
     async def get_pip_size(self, symbol: str) -> int | float:
         if symbol not in self._pip_sizes:

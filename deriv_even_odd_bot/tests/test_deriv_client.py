@@ -583,6 +583,85 @@ def test_proposal_sends_underlying_symbol_and_no_barrier():
     asyncio.run(run())
 
 
+def test_verify_reports_request_failure_distinctly_from_confirmed_unavailable():
+    """The exact misreading from the live incident: a REQUEST error must not
+    read like Deriv said the symbol lacks Even/Odd. Both R_75 and R_100
+    always offer it; what failed there was the request, not the check."""
+    async def run():
+        c = _client()
+
+        async def failing_send(payload):
+            raise DerivAPIError("InputValidationFailed",
+                                "Properties not allowed: currency.")
+
+        c._send = failing_send
+        ok, why = await c.verify_even_odd_available("R_100")
+        assert not ok
+        assert "REQUEST FAILED" in why
+        assert "never confirmed either way" in why
+        assert "Deriv said Even/Odd is unavailable" in why  # the negation
+    asyncio.run(run())
+
+
+def test_verify_reports_confirmed_unavailable_distinctly_from_a_request_failure():
+    async def run():
+        c = _client()
+
+        async def ok_send(payload):
+            return {"contracts_for": {"available": [{"contract_type": "CALL"}]}}
+
+        c._send = ok_send
+        ok, why = await c.verify_even_odd_available("R_100")
+        assert not ok
+        assert "CONFIRMED missing" in why
+        assert "REQUEST FAILED" not in why
+    asyncio.run(run())
+
+
+def test_verify_confirms_availability_when_both_types_present():
+    async def run():
+        c = _client()
+
+        async def ok_send(payload):
+            return {"contracts_for": {"available": [
+                {"contract_type": "DIGITEVEN"}, {"contract_type": "DIGITODD"}]}}
+
+        c._send = ok_send
+        ok, why = await c.verify_even_odd_available("R_100")
+        assert ok
+        assert "confirmed available" in why
+    asyncio.run(run())
+
+
+def test_contracts_for_omits_currency():
+    """CONFIRMED LIVE, 2026-09-16, against a real demo account: sending
+    currency here crash-loops the process. See contracts_for's docstring.
+
+    verify_even_odd_available() is the Section 1 startup gate -- if this
+    regresses, every configured symbol fails verification, main.py raises
+    "no configured symbol offers DIGITEVEN/DIGITODD", and the process
+    crash-loops against Railway's restart budget before a single tick is
+    ever subscribed.
+    """
+    async def run():
+        c = _client()
+        sent: dict = {}
+
+        async def fake_send(payload):
+            sent.update(payload)
+            return {"contracts_for": {"available": [
+                {"contract_type": "DIGITEVEN"}, {"contract_type": "DIGITODD"}]}}
+
+        c._send = fake_send
+        await c.contracts_for("R_100", currency="USD")
+        assert "currency" not in sent
+        assert sent["contracts_for"] == "R_100"
+
+        ok, why = await c.verify_even_odd_available("R_100", "USD")
+        assert ok, why
+    asyncio.run(run())
+
+
 def test_active_symbols_omits_product_type_and_reads_either_field_name():
     async def run():
         c = _client()

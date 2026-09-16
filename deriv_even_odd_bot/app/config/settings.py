@@ -22,6 +22,7 @@ TWO SAFETY RULES CARRIED FORWARD FROM PRIOR INCIDENTS IN THIS ACCOUNT:
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,8 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -172,12 +175,68 @@ class Settings:
         r["stale_tick_seconds"] = _env_float("STALE_TICK_SECONDS", r.get("stale_tick_seconds", 30.0))
 
         s = self.raw.setdefault("staking", {})
-        # Spec Section 31: progressive staking is separate from prediction
-        # and disabled by default. Prior live evidence in this account: at
-        # negative expectancy a martingale converts a slow bleed into a fast
-        # one, so this stays off unless deliberately switched on.
+        # Spec Section 31: progressive staking is separate from prediction.
+        # method + martingale_enabled is a deliberate double gate -- setting
+        # method: martingale alone does nothing; martingale_enabled must
+        # also be explicitly true. That way a config typo (or a template
+        # copied from elsewhere) can only turn martingale OFF by accident,
+        # never on.
         s["method"] = os.getenv("STAKING_METHOD", s.get("method", "fixed"))
         s["kelly_fraction"] = _env_float("KELLY_FRACTION", s.get("kelly_fraction", 0.25))
+        s["martingale_enabled"] = _env_bool(
+            "STAKING_MARTINGALE_ENABLED", s.get("martingale_enabled", False))
+        # Escalates the stake once the losing streak REACHES this length --
+        # i.e. the trade placed immediately after the Nth consecutive loss.
+        # "kicks in after two consecutive losses" means this stays at its
+        # default of 2: losses 1 and 2 stake at base, the trade after loss 2
+        # is the first escalated one.
+        s["martingale_trigger_losses"] = _env_int(
+            "STAKING_MARTINGALE_TRIGGER_LOSSES",
+            s.get("martingale_trigger_losses", s.get("min_consecutive_losses", 2)))
+        # Stake at step n is base_stake * factor**n. 2.0 is the classic
+        # doubling progression: at Deriv's ~1.95x Even/Odd payout, doubling
+        # after a loss recovers the prior stake and overshoots into a small
+        # profit rather than exactly breaking even (breakeven would need
+        # factor ~= 1/(payout-1) =~ 1.05 at 1.95x). Doubling is simpler to
+        # reason about from the logs at the cost of a faster-growing stake;
+        # that trade-off is why max_steps exists.
+        s["martingale_factor"] = _env_float(
+            "STAKING_MARTINGALE_FACTOR", s.get("martingale_factor", 2.0))
+        # Hard ceiling on escalation depth. After this many consecutive
+        # losses the stake stops climbing and holds at the step-N amount
+        # (still subject to max_stake) until a win resets the streak to
+        # zero -- it does NOT fall back to base_stake on its own and does
+        # NOT stop trading. max_consecutive_losses in the risk block above
+        # is the separate, larger, hard stop that halts trading entirely;
+        # martingale_max_steps should always stay well below it, or the
+        # escalation and the hard stop fire at the same time and the
+        # ordering between them is not something to rely on.
+        s["martingale_max_steps"] = _env_int(
+            "STAKING_MARTINGALE_MAX_STEPS", s.get("martingale_max_steps", 3))
+        if s["martingale_max_steps"] >= r["max_consecutive_losses"]:
+            logger.warning(
+                "martingale_max_steps (%d) is not comfortably below "
+                "max_consecutive_losses (%d) -- the escalation ceiling and "
+                "the hard trading stop will engage close together",
+                s["martingale_max_steps"], r["max_consecutive_losses"])
+        # The uncapped step-N stake, checked against max_stake at startup
+        # rather than discovered silently at 2am when step 3 actually fires.
+        # A max_stake ceiling binding mid-progression is not a bug -- it is
+        # the deliberate outer limit -- but it changes what "3 steps" means
+        # in practice (the last step or two clip to the same capped amount
+        # instead of continuing to double), and that is worth knowing before
+        # it happens rather than after.
+        full_top_stake = r["base_stake"] * (s["martingale_factor"] ** s["martingale_max_steps"])
+        if s["martingale_enabled"] and full_top_stake > r["max_stake"]:
+            logger.warning(
+                "martingale's uncapped step-%d stake would be %.2f "
+                "(base_stake %.2f x factor %.2f ^ %d), which exceeds "
+                "max_stake %.2f -- the top step(s) will clip to max_stake "
+                "rather than keep doubling. Raise max_stake or lower "
+                "martingale_factor/martingale_max_steps if that is not "
+                "the intended progression.",
+                s["martingale_max_steps"], full_top_stake, r["base_stake"],
+                s["martingale_factor"], s["martingale_max_steps"], r["max_stake"])
 
     @property
     def gating(self) -> dict:

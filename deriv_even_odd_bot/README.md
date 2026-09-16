@@ -92,7 +92,7 @@ python -m app.main            # research mode: never calls BUY
 Run the tests:
 
 ```bash
-pytest tests/ -q              # 154 tests
+pytest tests/ -q              # 163 tests
 ```
 
 ---
@@ -254,6 +254,10 @@ observed live in a sibling bot — at factor 2.0 that is a 4,096x stake.
 | websockets 14+ removed `.closed`; reading it raised AttributeError right after every successful connect | `.state is WsState.OPEN` throughout |
 | Current Options API renamed `symbol` → `underlying_symbol` and rejects `product_type` | both handled; `barrier` omitted for DIGITEVEN/DIGITODD |
 | A trailing newline in a pasted API token 401s identically to a revoked one | settings strip; auth errors report token shape, never the token |
+| **CONFIRMED LIVE 2026-09-16**, real demo account: `contracts_for` rejects `currency` (`Properties not allowed: currency`), which crash-looped a Railway deployment before a single tick was subscribed | `currency` dropped from the request; the Section 1 fail-safe worked exactly as designed — it just needed the right request to check against |
+| Same incident, a second bug: a *request failure* on `contracts_for` and a *confirmed* "Even/Odd not offered" both read as `(False, "contracts_for failed: ...")`, so a live log looked like Deriv said R_75/R_100 lack Even/Odd, when actually the check never completed | the two cases now say so explicitly — `"REQUEST FAILED ... never confirmed either way"` vs `"Deriv CONFIRMED missing contract types"` |
+| Martingale existed in `StakingEngine` but was never read from config or env — `method: martingale` alone did nothing | wired end to end; `config.yaml` ships it on (trigger 2, max 3 steps, factor 2.0), with a startup warning if `martingale_max_steps` sits too close to the hard `max_consecutive_losses` stop |
+| A settlement timeout was recorded as a loss in the trades table but did NOT update the martingale loss-streak counter — the DB and the live escalation state could disagree | both now update together on a timeout, conservatively, as a loss |
 | `emergency_stop` is a method and `emergency_stopped` is the flag; reading the former gives a truthy bound method and freezes the bot permanently | found by the smoke harness during this rewrite — 3,000/3,000 ticks refused with `NO_TRADE_EMERGENCY_STOP`; now reads the flag |
 
 ---

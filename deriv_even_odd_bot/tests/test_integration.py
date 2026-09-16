@@ -193,6 +193,54 @@ class TestStaking:
         assert stake == 1.0
         assert "not enabled" in why
 
+    def test_martingale_step_schedule_matches_trigger_two_max_steps_three(self):
+        """Exact schedule requested: base stake for 0 or 1 losses, escalation
+        starting on the trade after the 2nd consecutive loss, capped at 3
+        steps, holding rather than resetting once capped."""
+        s = StakingEngine(method=MARTINGALE, martingale_enabled=True,
+                          base_stake=1.0, max_stake=1000.0,
+                          martingale_factor=2.0, martingale_max_steps=3,
+                          min_consecutive_losses=2)
+
+        def stake_after(n_losses: int) -> float:
+            s._consecutive_losses = n_losses
+            stake, _why = s.stake_for()
+            return stake
+
+        assert stake_after(0) == 1.0
+        assert stake_after(1) == 1.0    # NOT yet escalated -- one loss only
+        assert stake_after(2) == 2.0    # kicks in: step 1, factor^1
+        assert stake_after(3) == 4.0    # step 2
+        assert stake_after(4) == 8.0    # step 3 -- the ceiling
+        assert stake_after(5) == 8.0    # holds, does not keep climbing
+        assert stake_after(20) == 8.0   # holds indefinitely until a win
+
+    def test_martingale_resets_to_base_on_a_win_not_on_reaching_the_ceiling(self):
+        s = StakingEngine(method=MARTINGALE, martingale_enabled=True,
+                          base_stake=1.0, max_stake=1000.0,
+                          martingale_factor=2.0, martingale_max_steps=3,
+                          min_consecutive_losses=2)
+        for _ in range(5):
+            s.register_result(won=False)
+        capped, _ = s.stake_for()
+        assert capped == 8.0
+        s.register_result(won=True)
+        assert s.consecutive_losses == 0
+        reset, _ = s.stake_for()
+        assert reset == 1.0
+
+    def test_martingale_is_bounded_by_max_stake_independent_of_the_step_ceiling(self):
+        """A max_stake ceiling binding mid-progression is a different thing
+        from martingale_max_steps -- both apply, and max_stake wins."""
+        s = StakingEngine(method=MARTINGALE, martingale_enabled=True,
+                          base_stake=1.0, max_stake=5.0,
+                          martingale_factor=2.0, martingale_max_steps=3,
+                          min_consecutive_losses=2)
+        s._consecutive_losses = 4     # would be step 3 -> 8.0 uncapped
+        stake, why = s.stake_for()
+        assert stake == 5.0
+        assert "capped at max_stake" in why
+
     def test_kelly_uses_lower_bound_and_is_capped(self):
         s = StakingEngine(method=KELLY, base_stake=1.0, max_stake=1000.0,
                           kelly_fraction=0.25, kelly_cap=0.05)
@@ -205,6 +253,42 @@ class TestStaking:
         stake, why = s.stake_for(balance=1000.0, probability_lower_bound=0.50,
                                  payout_multiple=1.95)
         assert stake == 0.0
+
+    def test_shipped_config_enables_martingale_with_the_exact_requested_schedule(self):
+        """config.yaml ships martingale on: trigger after 2 consecutive
+        losses, 3 steps max. This constructs Settings against the real
+        shipped file (no path override) and checks the wiring end to end --
+        the values previously existed in StakingEngine but were never read
+        from config.yaml or env, so 'method: martingale' alone did nothing."""
+        from app.config.settings import Settings
+        settings = Settings()
+        s = settings.staking
+        assert s["method"] == "martingale"
+        assert s["martingale_enabled"] is True
+        assert s["martingale_trigger_losses"] == 2
+        assert s["martingale_max_steps"] == 3
+
+        engine = StakingEngine(
+            method=s["method"], base_stake=settings.risk["base_stake"],
+            max_stake=settings.risk["max_stake"],
+            martingale_enabled=s["martingale_enabled"],
+            martingale_factor=s["martingale_factor"],
+            martingale_max_steps=s["martingale_max_steps"],
+            min_consecutive_losses=s["martingale_trigger_losses"])
+        engine._consecutive_losses = 1
+        assert engine.stake_for()[0] == settings.risk["base_stake"], (
+            "must not escalate before the trigger is reached")
+        engine._consecutive_losses = 2
+        assert engine.stake_for()[0] > settings.risk["base_stake"], (
+            "must escalate on the trade right after the 2nd consecutive loss")
+
+    def test_martingale_max_steps_stays_below_the_hard_trading_stop(self):
+        """The escalation ceiling and the hard consecutive-loss stop are
+        different safety layers; the shipped config keeps them apart."""
+        from app.config.settings import Settings
+        settings = Settings()
+        assert (settings.staking["martingale_max_steps"]
+                < settings.risk["max_consecutive_losses"])
 
 
 class TestCalibration:
