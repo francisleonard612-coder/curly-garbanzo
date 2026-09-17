@@ -72,12 +72,19 @@ class RegimeDetector:
 
     def __init__(self, *, min_samples: int = 2000, jsd_threshold: float = 0.02,
                  entropy_floor: float = 0.985, cusum_threshold: float = 5.0,
-                 dispersion_threshold: float = 0.10):
+                 dispersion_threshold: float = 0.10, cusum_window: int = 5000):
         self.min_samples = min_samples
         self.jsd_threshold = jsd_threshold
         self.entropy_floor = entropy_floor
         self.cusum_threshold = cusum_threshold
         self.dispersion_threshold = dispersion_threshold
+        #: `sd` in update_cusum is meant to be the standard error of the
+        #: CURRENT evidence window, not of the bot's entire lifetime tick
+        #: count. Left unbounded, `_n` only grows, so `sd` decays toward 0
+        #: forever and the detector eventually -- then permanently --
+        #: flags every tick as a change point regardless of the stream.
+        #: Resetting on a rolling window keeps `sd` meaningful.
+        self.cusum_window = cusum_window
         self._cusum_pos = 0.0
         self._cusum_neg = 0.0
         self._n = 0
@@ -88,10 +95,14 @@ class RegimeDetector:
         x = (1.0 if parity == 0 else 0.0) - 0.5
         self._cusum_pos = max(0.0, self._cusum_pos + x - 0.01)
         self._cusum_neg = max(0.0, self._cusum_neg - x - 0.01)
-        return max(self._cusum_pos, self._cusum_neg)
+        result = max(self._cusum_pos, self._cusum_neg)
+        if self._n >= self.cusum_window:
+            self.reset_cusum()
+        return result
 
     def reset_cusum(self) -> None:
         self._cusum_pos = self._cusum_neg = 0.0
+        self._n = 0
 
     def classify(self, *, recent_digits: list[int], long_run_freq: list[float],
                  edge_verdict=None, ensemble_result=None,
