@@ -195,25 +195,32 @@ class HardGates:
                         "proposal too old to execute safely")
         ok(NO_TRADE_STALE_PROPOSAL, "proposal fresh")
 
-        # --- the economic gate (Sections 11, 12, 14) ------------------------
-        # Section 14 defines INVALID as "no economically valid edge -> WAIT".
-        # We use the POINT estimate here, not the lower confidence bound.
-        # Section 10 explicitly says requiring the lower bound to clear
-        # break-even in every situation is too restrictive, so the lower bound
-        # moved into the opportunity score, where wide intervals reduce
-        # quality continuously. What remains hard is the sign of the expected
-        # value itself: a contract whose point EV is negative is a bet we are
-        # paying to place.
+        # --- the economic gate: DEMOTED TO INFORMATIONAL, BY REQUEST --------
+        # PREVIOUSLY hard (Sections 11, 12, 14): a candidate whose point EV
+        # was <= min_expected_value was vetoed outright, on the grounds that
+        # a negative-EV contract is arithmetically a losing bet regardless of
+        # how the opportunity score reads.
+        #
+        # As of this change, EV/edge no longer stops a trade here. It is
+        # still computed and still recorded on every decision (see
+        # decision.expected_value / decision.edge in engine.py, and the
+        # explanation string below), so nothing about the economics is
+        # hidden -- it simply no longer vetoes. What decides whether a
+        # candidate trades now is entirely the opportunity score / trade
+        # zone in app/evidence/opportunity.py (model agreement among its
+        # contributors) plus risk_decision below.
+        #
+        # NOTE: this file is not the only place EV was enforced. See the
+        # matching change in app/evidence/opportunity.py's score(), which
+        # also forced zone=INVALID on non-positive EV -- both had to change
+        # together, or this one is a no-op.
         ev = float(edge_assessment.expected_value)
-        if ev <= min_expected_value:
-            return fail(
-                NO_TRADE_NEGATIVE_EV,
-                f"expected value {ev:+.4f} <= {min_expected_value:+.4f} at "
-                f"P={edge_assessment.probability:.4f} against break-even "
-                f"{edge_assessment.break_even:.4f} "
-                f"(payout {proposal.payout_multiple:.3f}x)")
         ok(NO_TRADE_NEGATIVE_EV,
-           f"EV {ev:+.4f}, edge {edge_assessment.point_edge:+.4f}")
+           f"[informational, non-blocking] EV {ev:+.4f} vs floor "
+           f"{min_expected_value:+.4f} at P={edge_assessment.probability:.4f} "
+           f"against break-even {edge_assessment.break_even:.4f} "
+           f"(payout {proposal.payout_multiple:.3f}x), "
+           f"edge {edge_assessment.point_edge:+.4f}")
 
         if risk_decision is None or not getattr(risk_decision, "allowed", False):
             return fail(NO_TRADE_RISK,

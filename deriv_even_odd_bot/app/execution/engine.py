@@ -35,6 +35,7 @@ import uuid
 
 from app.calibration.calibrator import CalibrationTracker
 from app.data.tick_store import SymbolState
+from app.diagnostics.agreement_calibration import AgreementOutcomeTracker
 from app.digits.extraction import DigitExtractionError, extract
 from app.economics.edge import (
     Proposal,
@@ -141,6 +142,12 @@ class SymbolPipeline:
         self._pending_member_p: dict[str, float] = {}
         self._pending_calibrated: dict[str, float] = {}
 
+        # Not a gate. See app/diagnostics/agreement_calibration.py -- this
+        # measures whether agreement predicts outcome at all before anyone
+        # wires a threshold to it.
+        self.agreement_tracker = AgreementOutcomeTracker()
+        self._pending_agreement: tuple[float, bool] | None = None
+
     # ---- cold start (Section 48) ----------------------------------------
 
     def seed(self, ticks) -> int:
@@ -227,6 +234,10 @@ class SymbolPipeline:
 
         # --- soft evidence (Sections 3, 4, 22, 23) --------------------------
         self._last_evidence = self._build_evidence(result, calibrator)
+
+        # Stashed pre-outcome, same leakage discipline as _pending_calibrated:
+        # this is a prediction ABOUT the tick, recorded before state.add().
+        self._pending_agreement = (result.agreement_fraction, side == "DIGITEVEN")
 
         decision = self._decision(
             "NO_TRADE", "PENDING", "", ex=ex, result=result,
@@ -374,6 +385,13 @@ class SymbolPipeline:
             self.calibrators["DIGITODD"].record(
                 self._pending_calibrated["DIGITODD"], 1 - occurred_even)
             self._pending_calibrated = {}
+        if self._pending_agreement is not None:
+            agreement_fraction, predicted_even = self._pending_agreement
+            self.agreement_tracker.record(
+                agreement_fraction=agreement_fraction,
+                predicted_even=predicted_even,
+                actual_even=(ex.parity == 0))
+            self._pending_agreement = None
         self.state_name = OBSERVING
         return ex.digit
 

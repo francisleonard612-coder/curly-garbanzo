@@ -301,9 +301,18 @@ class OpportunityScorer:
         threshold, mult, sel_notes = self.selectivity.threshold_for(evidence)
 
         # --- zone (Section 14) ------------------------------------------------
-        if edge_assessment is not None and edge_assessment.expected_value <= 0:
-            zone = INVALID
-        elif score >= max(self.strong_threshold, threshold):
+        # PREVIOUSLY: `if edge_assessment is not None and
+        # edge_assessment.expected_value <= 0: zone = INVALID` -- a second,
+        # redundant EV veto, independent of hard_gates.py's. Removed by
+        # request, in the same change that demoted the hard_gates.py check to
+        # informational-only. Both had to move together: leaving this one in
+        # place would have silently kept vetoing negative-EV candidates via
+        # the zone calculation even with the hard gate disabled, making that
+        # change a no-op. EV is still a heavily-weighted soft contributor
+        # above (calibrated_edge, conservative_edge, expected_value,
+        # probability_of_positive_edge), so a badly negative EV still drags
+        # the score down -- it just no longer forces INVALID outright.
+        if score >= max(self.strong_threshold, threshold):
             zone = STRONG
         elif score >= threshold:
             zone = VALIDATED

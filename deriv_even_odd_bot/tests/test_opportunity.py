@@ -252,16 +252,21 @@ def test_shadow_analysis_returns_nothing_and_reports_counterfactuals():
 
 
 # --------------------------------------------------------------------------
-# THE TWO THAT MATTER: the economics stayed hard
+# UPDATED BY REQUEST: EV/edge demoted from hard veto to informational-only.
+#
+# This section used to be titled "THE TWO THAT MATTER: the economics stayed
+# hard" and asserted the opposite of what's tested below. That assertion was
+# deliberately removed, in the same change, from both app/execution/
+# hard_gates.py (check_execution) and app/evidence/opportunity.py (score()'s
+# zone calculation) -- changing only one would have left the other silently
+# re-imposing the old veto. See the comments at both call sites for the
+# reasoning; this test now documents the new contract instead of the old one.
 # --------------------------------------------------------------------------
 
-def test_negative_ev_is_refused_no_matter_how_good_the_soft_evidence_is():
-    """The regression this whole refactor risks introducing.
-
-    Every soft contributor is set to its best possible value. The only thing
-    wrong is that the contract loses money in expectation. It must still be
-    refused, by a HARD gate, with a reason code naming the economics.
-    """
+def test_negative_ev_no_longer_blocks_but_is_still_recorded():
+    """EV is informational now: it must not block, and it must still be
+    fully visible in the decision trail -- nothing about the economics is
+    hidden, it simply no longer vetoes on its own."""
     gates = HardGates(research_mode=False)
     perfect = make_evidence(randomness=1.0, agreement=1.0, health=1.0,
                             cal_quality=1.0, dispersion_quality=1.0,
@@ -272,13 +277,22 @@ def test_negative_ev_is_refused_no_matter_how_good_the_soft_evidence_is():
     assert edge.expected_value < 0
 
     assessment = scorer.score(edge_assessment=edge, evidence=perfect)
-    assert assessment.zone == INVALID, "negative EV is INVALID per Section 14"
+    # Zone is no longer forced to INVALID by a negative EV alone; with every
+    # other contributor at its best value this candidate should score well.
+    assert assessment.zone != INVALID or assessment.score < 50, (
+        "with perfect soft evidence, zone should now be driven by the score, "
+        "not force-vetoed by EV")
 
     risk_ok = type("R", (), {"allowed": True, "reason": ""})()
     outcome = gates.check_execution(edge_assessment=edge, risk_decision=risk_ok)
-    assert outcome.blocked
-    assert outcome.code == NO_TRADE_NEGATIVE_EV
-    assert "break-even" in outcome.explanation
+    assert not outcome.blocked, "EV must not block execution anymore"
+    # On success, HardGateOutcome.code/.explanation are the pass-through
+    # defaults (None / "all hard execution gates passed") -- the EV verdict
+    # now lives only in the trail, as an informational (passed=True) entry.
+    ev_entry = next(g for g in outcome.trail if g.code == NO_TRADE_NEGATIVE_EV)
+    assert ev_entry.passed, "EV entry must be non-blocking (passed=True)"
+    assert "informational, non-blocking" in ev_entry.explanation
+    assert "break-even" in ev_entry.explanation
 
 
 @pytest.mark.parametrize("payout_multiple,expected_breakeven", [
@@ -298,6 +312,21 @@ def test_csprng_stream_produces_candidates_that_reach_the_economics():
     NEW behaviour: every candidate is priced and scored, so the rejection
     statistics contain actual edges and EVs -- and the conclusion is the
     same, but now it is a measurement instead of an assumption.
+
+    STILL TRUE AFTER THE EV-DEMOTION CHANGE, BUT FOR A DIFFERENT REASON.
+    Neither hard_gates.py's EV check nor opportunity.py's old `if
+    expected_value <= 0: zone = INVALID` line is what keeps traded==0 here
+    anymore -- both were removed. What still enforces it is the score's own
+    floor mechanism: `calibrated_edge` and `expected_value` are weighted
+    contributors with floor_at=0.05, and clamp() sends any negative edge's
+    quality to exactly 0.0, which caps the whole score at ~5 regardless of
+    how good every other contributor looks (see make_evidence's generous
+    defaults above -- agreement=0.9, health=1.0, cal_quality=0.9 -- none of
+    it matters once edge quality floors out). That is a structural
+    consequence of the floors, not a rule anyone wrote down naming EV, so
+    it would silently stop holding if target_edge or these floor_at values
+    changed independently later. If this assertion ever fails, that is
+    almost certainly why.
     """
     scorer = OpportunityScorer()
     monitor = DeadlockMonitor(idle_alert_seconds=0.0, idle_alert_ticks=0)

@@ -106,6 +106,20 @@ class Dashboard:
                        f"{_fmt(m['weight'], '{:.3f}')}   {m['health']}")
         out.append(thin)
 
+        # Observation-only: does agreement level actually predict outcome
+        # here? See app/diagnostics/agreement_calibration.py. Not a gate.
+        be = d.break_even_probability if d and d.break_even_probability else 0.5208
+        agr = pipeline.agreement_tracker.report(break_even_accuracy=be)
+        out.append(" AGREEMENT   bucket            n     hit_rate  wilson_lb")
+        for b in agr.buckets:
+            if b.n:
+                out.append(f"             [{b.lower:.2f}-{b.upper:.2f})   "
+                           f"{b.n:>5}  {_fmt(b.hit_rate, '{:.3f}')}    "
+                           f"{_fmt(b.wilson_lower, '{:.3f}')}")
+        for chunk in _wrap(agr.summary, w - 14):
+            out.append(f"             {chunk}")
+        out.append(thin)
+
         if d:
             out.append(f" DECISION    {d.decision}")
             out.append(f" REASON      {d.reason_code}")
