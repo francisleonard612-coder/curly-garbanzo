@@ -57,6 +57,24 @@ gating:
   max_probability_uncertainty: 0.02
   min_calibration_quality: 0.50
   max_parity_inconsistency: 0.10
+
+  # ADDED, EXPLICIT, USER-CHOSEN (see chat log / app/diagnostics/
+  # agreement_calibration.py): a real hard gate, unlike min_model_agreement
+  # above. Set to the [0.85-0.90) bucket floor -- the highest-agreement
+  # segment with enough samples (n=4,632) to trust its numbers.
+  #
+  # WHAT THE DATA ACTUALLY SAYS ABOUT THIS BUCKET: hit_rate 49.9%, Wilson
+  # 95% lower bound 0.485. Break-even for this payout is 0.5208. This
+  # floor is BELOW break-even by design -- it was chosen anyway, as a
+  # volume filter (cut every candidate below the best-observed segment)
+  # rather than a claim that this segment is profitable. It is not. If
+  # this comment still says that and the number below has been raised in
+  # the hope that a higher bucket clears break-even, check
+  # agreement_calibration.py's live report first -- as of the data behind
+  # this comment, [0.95-1.00) actually did *worse* (49.5%-50.2%) than
+  # [0.85-0.90), so higher is not a safe assumption without checking.
+  min_agreement_fraction: 0.85
+
   # Family-wide alpha for the randomness battery. 0.01, not 0.05: the
   # battery runs continuously, so a loose alpha manufactures signal.
   randomness_alpha: 0.01
@@ -69,9 +87,18 @@ risk:
   max_daily_loss: 25.0
   max_drawdown: 50.0
   max_consecutive_losses: 8
-  max_trades_per_day: 200
+  # LOWERED FROM 200, alongside cooldown_seconds below: min_agreement_fraction
+  # cuts WHICH candidates can trade, not HOW OFTEN one clears it. At known
+  # negative expectancy (see min_agreement_fraction's comment above), volume
+  # is the second lever -- fewer trades per day means a smaller expected
+  # cumulative loss for the same per-trade edge. 20/day is a starting point,
+  # not a derived number; tune it directly.
+  max_trades_per_day: 20
   max_concurrent_trades: 1
-  cooldown_seconds: 0.0
+  # 300s = one trade at most every 5 minutes, same reasoning as
+  # max_trades_per_day above. The two stack: whichever limit is hit first
+  # stops that tick from trading.
+  cooldown_seconds: 300.0
   stale_tick_seconds: 30.0
 
 staking:
