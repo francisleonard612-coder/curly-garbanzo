@@ -199,6 +199,14 @@ _VERDICTS = {
     "NO_TRADE_RISK":
         "A risk limit is doing its job. Confirm which one, and whether it "
         "latched on a past loss streak that has since ended.",
+    "NO_TRADE_LOW_AGREEMENT":
+        "The explicit min_agreement_fraction floor (config.yaml gating."
+        "min_agreement_fraction) is doing its job. This is a volume filter "
+        "chosen against measured data that showed no agreement bucket "
+        "clearing break-even -- it deliberately does not stop here. If "
+        "trades are still occurring below break-even, that is expected: "
+        "see app/diagnostics/agreement_calibration.py's report for what "
+        "was actually measured before this floor was set.",
     "NO_TRADE_LOW_EDGE":
         "Candidates are economically thin rather than structurally blocked. "
         "Check the mean edge below: if it is negative, the models are not "

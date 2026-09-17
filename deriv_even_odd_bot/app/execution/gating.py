@@ -171,6 +171,9 @@ class TradeGate:
             max_proposal_age_seconds=g.get("max_proposal_age_seconds", 5.0),
             research_mode=research_mode)
         self.min_expected_value = g.get("min_expected_value", 0.0)
+        # Explicit, user-chosen volume filter -- see hard_gates.py's
+        # check_execution for why this is NOT a profitability claim.
+        self.min_agreement_fraction = g.get("min_agreement_fraction", 0.0)
         self.scorer = OpportunityScorer(
             target_edge=g.get("target_edge", g.get("min_edge", 0.02)),
             borderline_threshold=g.get("borderline_threshold", 40.0),
@@ -213,7 +216,14 @@ class TradeGate:
 
         hard = self.hard.check_execution(
             edge_assessment=edge_assessment, risk_decision=risk_decision,
-            now=now, min_expected_value=self.min_expected_value)
+            now=now, min_expected_value=self.min_expected_value,
+            # Reconstructed from evidence.models.agreement_score (the [0,1]
+            # rescaled value) back to the raw [0.5, 1.0] fraction the
+            # agreement_calibration.py buckets and this floor are both
+            # defined on: fraction = 0.5 + score / 2.0, exact inverse of
+            # signals.py's `clamp((agreement - 0.5) * 2.0)`.
+            agreement_fraction=0.5 + evidence.models.agreement_score / 2.0,
+            min_agreement_fraction=self.min_agreement_fraction)
         decision.gates.extend(hard.trail)
 
         if hard.blocked:

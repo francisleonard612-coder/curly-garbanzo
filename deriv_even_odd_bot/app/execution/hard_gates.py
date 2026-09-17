@@ -45,6 +45,7 @@ NO_TRADE_DATABASE = "NO_TRADE_DATABASE"
 NO_TRADE_BAD_PROPOSAL = "NO_TRADE_BAD_PROPOSAL"
 NO_TRADE_STALE_PROPOSAL = "NO_TRADE_STALE_PROPOSAL"
 NO_TRADE_NEGATIVE_EV = "NO_TRADE_NEGATIVE_EV"
+NO_TRADE_LOW_AGREEMENT = "NO_TRADE_LOW_AGREEMENT"
 NO_TRADE_RISK = "NO_TRADE_RISK"
 NO_TRADE_OPEN_CONTRACT = "NO_TRADE_OPEN_CONTRACT"
 NO_TRADE_EMERGENCY_STOP = "NO_TRADE_EMERGENCY_STOP"
@@ -58,9 +59,9 @@ HARD_CODES = frozenset({
     NO_TRADE_API, NO_TRADE_DATA_STALE, NO_TRADE_MALFORMED_TICK,
     NO_TRADE_MINIMUM_DATA, NO_TRADE_MODEL_SYSTEM_FAILURE,
     NO_TRADE_CALIBRATION_UNFITTED, NO_TRADE_DATABASE, NO_TRADE_BAD_PROPOSAL,
-    NO_TRADE_STALE_PROPOSAL, NO_TRADE_NEGATIVE_EV, NO_TRADE_RISK,
-    NO_TRADE_OPEN_CONTRACT, NO_TRADE_EMERGENCY_STOP, NO_TRADE_ACCOUNT,
-    NO_TRADE_RESEARCH_MODE,
+    NO_TRADE_STALE_PROPOSAL, NO_TRADE_NEGATIVE_EV, NO_TRADE_LOW_AGREEMENT,
+    NO_TRADE_RISK, NO_TRADE_OPEN_CONTRACT, NO_TRADE_EMERGENCY_STOP,
+    NO_TRADE_ACCOUNT, NO_TRADE_RESEARCH_MODE,
 })
 
 
@@ -176,7 +177,9 @@ class HardGates:
 
     def check_execution(self, *, edge_assessment, risk_decision,
                         now: float | None = None,
-                        min_expected_value: float = 0.0) -> HardGateOutcome:
+                        min_expected_value: float = 0.0,
+                        agreement_fraction: float | None = None,
+                        min_agreement_fraction: float = 0.0) -> HardGateOutcome:
         trail: list[GateResult] = []
         now = time.time() if now is None else now
 
@@ -226,6 +229,32 @@ class HardGates:
             return fail(NO_TRADE_RISK,
                         getattr(risk_decision, "reason", "risk not evaluated"))
         ok(NO_TRADE_RISK, "risk checks passed")
+
+        # --- agreement floor: EXPLICIT, user-chosen, KNOWN to sit below
+        # break-even (see app/diagnostics/agreement_calibration.py) --------
+        # This is not a claim that agreement >= min_agreement_fraction is
+        # profitable. The measured data says it is not: the best matured
+        # bucket at this floor (n=4,632; hit_rate 49.9%; Wilson lower bound
+        # 0.485) sits ~2 points below the 0.5208 break-even this payout
+        # requires. This gate exists to do exactly and only what was asked:
+        # cut trade volume down to the single highest-agreement segment
+        # observed, in place of trading on every candidate regardless of
+        # agreement. It does not convert a losing segment into a winning
+        # one -- see cooldown_seconds / max_trades_per_day in config.yaml
+        # for the frequency lever that actually limits how much this costs
+        # over time.
+        if (min_agreement_fraction > 0.0
+                and (agreement_fraction is None
+                     or agreement_fraction < min_agreement_fraction)):
+            got = "unavailable" if agreement_fraction is None else f"{agreement_fraction:.4f}"
+            return fail(NO_TRADE_LOW_AGREEMENT,
+                        f"agreement {got} < floor {min_agreement_fraction:.4f} "
+                        f"(floor is a volume filter, not a profitability claim "
+                        f"-- see agreement_calibration.py)")
+        if min_agreement_fraction > 0.0:
+            ok(NO_TRADE_LOW_AGREEMENT,
+               f"agreement {agreement_fraction:.4f} >= floor "
+               f"{min_agreement_fraction:.4f}")
 
         if self.research_mode:
             return fail(NO_TRADE_RESEARCH_MODE,
