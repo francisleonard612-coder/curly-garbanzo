@@ -125,7 +125,7 @@ risk:
   # is the second lever -- fewer trades per day means a smaller expected
   # cumulative loss for the same per-trade edge. 20/day is a starting point,
   # not a derived number; tune it directly.
-  max_trades_per_day: 200
+  max_trades_per_day: 2000
   max_concurrent_trades: 1
   # 300s = one trade at most every 5 minutes, same reasoning as
   # max_trades_per_day above. The two stack: whichever limit is hit first
@@ -158,7 +158,7 @@ staking:
   # stake at step n = base_stake * martingale_factor**n. 2.0 is classic
   # doubling -- at a 1.95x payout it recovers the prior stake and overshoots
   # into a small profit rather than exactly breaking even.
-  martingale_factor: 1.3
+  martingale_factor: 1.55
   # Escalation stops here (still subject to max_stake) and HOLDS rather than
   # resetting -- a win is what resets the streak, not reaching this ceiling.
   # Keep this well below risk.max_consecutive_losses (the hard trading
