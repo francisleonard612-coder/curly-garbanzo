@@ -30,12 +30,44 @@ gating:
   # Score in [0,100] required to trade. Adaptive selectivity (Section 15) can
   # raise this by up to 60% when model health degrades. Nothing lowers it --
   # in particular, a long dry spell does not (Sections 15, 16).
-  min_opportunity_score: 62.0
+  #
+  # LOWERED, BY REQUEST, ALONGSIDE the floor-override removal in
+  # app/evidence/opportunity.py's score() (see that comment for why the
+  # override existed and what removing it changes). With the override gone,
+  # score is a plain weighted blend again -- but the four economics
+  # contributors still carry 58% of total weight, and measured edge on this
+  # stream is consistently negative (see agreement_calibration.py's report;
+  # edge has NEVER been observed positive across every session logged so
+  # far, clustering narrowly around -0.01 to -0.03 depending on the
+  # session's payout). That caps what any candidate can realistically score:
+  # plugging real logged values (agreement 0.20 to 1.00, calibration quality
+  # 0.5 to 0.99, realistic dispersion/health) through the actual scorer gave
+  # a range of ~16-28/100, never higher, for one representative real
+  # candidate (break_even 0.5303, edge -0.0274). 62 -- or even the old
+  # borderline_threshold of 40 -- is unreachable by design at that ceiling;
+  # this was true before this change too, just hidden behind the override
+  # always capping the same candidates to ~5-10 first.
+  #
+  # 20.0 sits inside that measured ~16-28 range: below the better-quality
+  # candidates observed, above the weaker ones, so it still discriminates
+  # among what actually varies (agreement, calibration quality, dispersion,
+  # model health) rather than admitting everything. Adaptive selectivity
+  # still multiplies this up during unstable regimes (observed x1.35 in
+  # DISTRIBUTION_SHIFT), so it naturally tightens further exactly when the
+  # scorer's own regime_quality contributor already reads worse -- that
+  # behavior is unchanged. Re-run the sensitivity check in the chat history
+  # for this change (or app/diagnostics/shadow.py) before raising this
+  # further; the 16-28 ceiling will drift with whatever break_even/edge this
+  # account is actually seeing, not with this number.
+  min_opportunity_score: 20.0
   # Score at or above which a candidate is STRONG rather than VALIDATED.
-  strong_opportunity_score: 80.0
+  # Lowered in proportion to min_opportunity_score above, same reasoning.
+  strong_opportunity_score: 32.0
   # Below this a candidate is INVALID rather than BORDERLINE. Purely a
-  # labelling boundary for diagnostics; both wait.
-  borderline_threshold: 40.0
+  # labelling boundary for diagnostics; both wait. Lowered in proportion to
+  # min_opportunity_score above -- 40 was unreachable and made every
+  # candidate INVALID regardless of relative quality.
+  borderline_threshold: 12.0
   # Edge at which the edge contributor saturates at full marks. NOT a cutoff:
   # half this edge still scores 0.5 there.
   target_edge: 0.02
@@ -73,7 +105,7 @@ gating:
   # agreement_calibration.py's live report first -- as of the data behind
   # this comment, [0.95-1.00) actually did *worse* (49.5%-50.2%) than
   # [0.85-0.90), so higher is not a safe assumption without checking.
-  min_agreement_fraction: 0.77
+  min_agreement_fraction: 0.85
 
   # Family-wide alpha for the randomness battery. 0.01, not 0.05: the
   # battery runs continuously, so a loose alpha manufactures signal.
@@ -82,18 +114,18 @@ gating:
 risk:
   # FIXED currency amount. Never a percentage of balance at this layer --
   # see the 527x incident documented in app/risk/staking.py.
-  base_stake: 0.35
-  max_stake: 1.0
+  base_stake: 1.0
+  max_stake: 5.0
   max_daily_loss: 25.0
   max_drawdown: 50.0
-  max_consecutive_losses: 3
+  max_consecutive_losses: 8
   # LOWERED FROM 200, alongside cooldown_seconds below: min_agreement_fraction
   # cuts WHICH candidates can trade, not HOW OFTEN one clears it. At known
   # negative expectancy (see min_agreement_fraction's comment above), volume
   # is the second lever -- fewer trades per day means a smaller expected
   # cumulative loss for the same per-trade edge. 20/day is a starting point,
   # not a derived number; tune it directly.
-  max_trades_per_day: 200
+  max_trades_per_day: 20
   max_concurrent_trades: 1
   # 300s = one trade at most every 5 minutes, same reasoning as
   # max_trades_per_day above. The two stack: whichever limit is hit first
@@ -126,7 +158,7 @@ staking:
   # stake at step n = base_stake * martingale_factor**n. 2.0 is classic
   # doubling -- at a 1.95x payout it recovers the prior stake and overshoots
   # into a small profit rather than exactly breaking even.
-  martingale_factor: 1.18
+  martingale_factor: 2.0
   # Escalation stops here (still subject to max_stake) and HOLDS rather than
   # resetting -- a win is what resets the streak, not reaching this ceiling.
   # Keep this well below risk.max_consecutive_losses (the hard trading

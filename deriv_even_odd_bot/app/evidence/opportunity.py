@@ -292,11 +292,34 @@ class OpportunityScorer:
         total_weight = sum(x.weight for x in c)
         raw = 100.0 * sum(x.weighted for x in c) / total_weight if total_weight else 0.0
 
+        # CHANGED, BY REQUEST: previously `score = min(raw, cap)`, where cap
+        # was 100 * the smallest floor_at among any below-floor contributor.
+        # In practice the four economics contributors (calibrated_edge,
+        # conservative_edge, expected_value, probability_of_positive_edge --
+        # 58% of total weight combined) sit below their floor on nearly
+        # every candidate, because measured edge on this stream is
+        # consistently negative and narrowly clustered (see
+        # app/diagnostics/agreement_calibration.py's report and the chat
+        # history around this change) -- there is essentially no session
+        # where edge varies enough to matter. That meant `cap` fired on
+        # ~every candidate regardless of the OTHER ~40% of weight
+        # (agreement, calibration quality, dispersion, persistence, regime,
+        # randomness), collapsing every score to ~5-10/100 and discarding
+        # all of that differentiation. This was a second, implicit
+        # profitability veto living in the score layer, functionally
+        # similar to the explicit ones already removed from hard_gates.py
+        # and this function's zone calculation.
+        #
+        # `capped_by` is kept for diagnostics (still shown in the dashboard
+        # explanation) but no longer overrides the score. `score` is now
+        # always the plain weighted blend `raw`. This does NOT mean
+        # candidates admitted this way have good economics -- they don't,
+        # by measurement -- it means the OTHER, non-economic evidence now
+        # actually determines which candidates clear the (also lowered,
+        # see min_opportunity_score in config.yaml) threshold, instead of
+        # economics silently vetoing all of them first regardless.
         capped_by = [x.name for x in c if x.below_floor]
         score = raw
-        if capped_by:
-            cap = 100.0 * min(x.floor_at for x in c if x.below_floor)
-            score = min(raw, cap)
 
         threshold, mult, sel_notes = self.selectivity.threshold_for(evidence)
 

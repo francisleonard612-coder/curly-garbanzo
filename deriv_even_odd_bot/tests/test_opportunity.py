@@ -313,20 +313,25 @@ def test_csprng_stream_produces_candidates_that_reach_the_economics():
     statistics contain actual edges and EVs -- and the conclusion is the
     same, but now it is a measurement instead of an assumption.
 
-    STILL TRUE AFTER THE EV-DEMOTION CHANGE, BUT FOR A DIFFERENT REASON.
-    Neither hard_gates.py's EV check nor opportunity.py's old `if
-    expected_value <= 0: zone = INVALID` line is what keeps traded==0 here
-    anymore -- both were removed. What still enforces it is the score's own
-    floor mechanism: `calibrated_edge` and `expected_value` are weighted
-    contributors with floor_at=0.05, and clamp() sends any negative edge's
-    quality to exactly 0.0, which caps the whole score at ~5 regardless of
-    how good every other contributor looks (see make_evidence's generous
-    defaults above -- agreement=0.9, health=1.0, cal_quality=0.9 -- none of
-    it matters once edge quality floors out). That is a structural
-    consequence of the floors, not a rule anyone wrote down naming EV, so
-    it would silently stop holding if target_edge or these floor_at values
-    changed independently later. If this assertion ever fails, that is
-    almost certainly why.
+    STILL TRUE, BUT THE MECHANISM HAS CHANGED TWICE NOW.
+    1) Originally: hard_gates.py's hard EV check, plus opportunity.py's own
+       `if expected_value <= 0: zone = INVALID`. Both removed (EV demoted
+       to informational, by request).
+    2) Then: the score's floor-override mechanism (`score = min(raw, cap)`)
+       still capped any candidate with negative edge quality to ~5,
+       regardless of every other contributor. Also removed, by request --
+       see the comment at that removal in opportunity.py's score().
+    NOW: nothing overrides or vetoes. `traded==0` holds here purely because
+    the plain weighted blend (`raw`) doesn't reach 62 (this scorer's class
+    default, NOT the same as config.yaml's min_opportunity_score, which a
+    real deployment may set differently) when the four economics
+    contributors -- 58% of total weight -- score near 0, even with every
+    other contributor at generous defaults (agreement=0.9, health=1.0,
+    cal_quality=0.9). Measured raw scores here run ~29-34, comfortably
+    under 62. If a deployment lowers its own min_opportunity_score (as one
+    now does, deliberately, with this exact ceiling in mind -- see
+    config.yaml's comment), this invariant stops applying to that
+    deployment on purpose; it still describes this scorer's own defaults.
     """
     scorer = OpportunityScorer()
     monitor = DeadlockMonitor(idle_alert_seconds=0.0, idle_alert_ticks=0)
