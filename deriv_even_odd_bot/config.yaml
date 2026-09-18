@@ -73,7 +73,7 @@ gating:
   # agreement_calibration.py's live report first -- as of the data behind
   # this comment, [0.95-1.00) actually did *worse* (49.5%-50.2%) than
   # [0.85-0.90), so higher is not a safe assumption without checking.
-  min_agreement_fraction: 0.85
+  min_agreement_fraction: 0.77
 
   # Family-wide alpha for the randomness battery. 0.01, not 0.05: the
   # battery runs continuously, so a loose alpha manufactures signal.
@@ -82,18 +82,18 @@ gating:
 risk:
   # FIXED currency amount. Never a percentage of balance at this layer --
   # see the 527x incident documented in app/risk/staking.py.
-  base_stake: 1.0
-  max_stake: 5.0
+  base_stake: 0.35
+  max_stake: 1.0
   max_daily_loss: 25.0
   max_drawdown: 50.0
-  max_consecutive_losses: 8
+  max_consecutive_losses: 3
   # LOWERED FROM 200, alongside cooldown_seconds below: min_agreement_fraction
   # cuts WHICH candidates can trade, not HOW OFTEN one clears it. At known
   # negative expectancy (see min_agreement_fraction's comment above), volume
   # is the second lever -- fewer trades per day means a smaller expected
   # cumulative loss for the same per-trade edge. 20/day is a starting point,
   # not a derived number; tune it directly.
-  max_trades_per_day: 20
+  max_trades_per_day: 200
   max_concurrent_trades: 1
   # 300s = one trade at most every 5 minutes, same reasoning as
   # max_trades_per_day above. The two stack: whichever limit is hit first
@@ -126,7 +126,7 @@ staking:
   # stake at step n = base_stake * martingale_factor**n. 2.0 is classic
   # doubling -- at a 1.95x payout it recovers the prior stake and overshoots
   # into a small profit rather than exactly breaking even.
-  martingale_factor: 2.0
+  martingale_factor: 1.18
   # Escalation stops here (still subject to max_stake) and HOLDS rather than
   # resetting -- a win is what resets the streak, not reaching this ceiling.
   # Keep this well below risk.max_consecutive_losses (the hard trading
