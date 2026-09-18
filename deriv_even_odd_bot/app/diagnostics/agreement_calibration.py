@@ -72,24 +72,36 @@ class AgreementCalibrationReport:
 
 
 class AgreementOutcomeTracker:
-    """Bins candidates by model-agreement fraction [0.5, 1.0] and tracks
-    realized accuracy per bin. min_samples_for_signal is deliberately the
-    same order of magnitude as CalibrationTracker.min_samples (300): fewer
-    than that in a bucket and its Wilson bound is too wide to act on.
+    """Bins candidates by model-agreement fraction and tracks realized
+    accuracy per bin. min_samples_for_signal is deliberately the same order
+    of magnitude as CalibrationTracker.min_samples (300): fewer than that in
+    a bucket and its Wilson bound is too wide to act on.
+
+    Buckets span the FULL [0.0, 1.0] range, not [0.5, 1.0]. FIXED: the
+    original version assumed agreement_fraction (from ensemble.py) can't go
+    below 0.5 and clamped anything lower into the [0.5-0.55) bucket. That
+    assumption was wrong -- agreement_fraction is "fraction of individual
+    members whose own p_even matches the ENSEMBLE's blended direction", not
+    a majority-vote fraction, and the blend (derived+direct averaged) can
+    end up favouring a side most individual members don't. Observed live:
+    agreement_fraction=0.22 on a real tick. Clamping that into the same
+    bucket as genuine ~50% splits silently merged two different
+    populations -- "roughly even split" and "most models actively
+    disagreed with the ensemble's own pick" -- into one bucket's stats.
     """
 
     def __init__(self, *, n_buckets: int = 10,
                  min_samples_for_signal: int = 300):
         self.n_buckets = int(n_buckets)
         self.min_samples_for_signal = int(min_samples_for_signal)
-        edges = [0.5 + i * (0.5 / self.n_buckets) for i in range(self.n_buckets + 1)]
+        edges = [i * (1.0 / self.n_buckets) for i in range(self.n_buckets + 1)]
         self._buckets = [AgreementBucket(edges[i], edges[i + 1])
                          for i in range(self.n_buckets)]
         self._total = 0
 
     def _bucket_for(self, agreement: float) -> AgreementBucket:
-        a = min(max(agreement, 0.5), 1.0)
-        idx = min(int((a - 0.5) / (0.5 / self.n_buckets)), self.n_buckets - 1)
+        a = min(max(agreement, 0.0), 1.0)
+        idx = min(int(a / (1.0 / self.n_buckets)), self.n_buckets - 1)
         return self._buckets[idx]
 
     def record(self, *, agreement_fraction: float, predicted_even: bool,

@@ -217,12 +217,26 @@ class TradeGate:
         hard = self.hard.check_execution(
             edge_assessment=edge_assessment, risk_decision=risk_decision,
             now=now, min_expected_value=self.min_expected_value,
-            # Reconstructed from evidence.models.agreement_score (the [0,1]
-            # rescaled value) back to the raw [0.5, 1.0] fraction the
-            # agreement_calibration.py buckets and this floor are both
-            # defined on: fraction = 0.5 + score / 2.0, exact inverse of
-            # signals.py's `clamp((agreement - 0.5) * 2.0)`.
-            agreement_fraction=0.5 + evidence.models.agreement_score / 2.0,
+            # FIXED: previously reconstructed as 0.5 + evidence.models.
+            # agreement_score / 2.0. That reconstruction assumed raw
+            # agreement_fraction never goes below 0.5, which is false --
+            # ensemble.py's agreement_fraction is "fraction of individual
+            # members whose own p_even matches the ENSEMBLE's blended
+            # direction", and the ensemble's blend can favour a direction
+            # most individual members don't (derived+direct averaging, not
+            # a member vote). Observed live: agreement_fraction=0.22 with
+            # p_even~0.50, i.e. only 22% of members agreed with the
+            # ensemble's own pick that tick. clamp() in signals.py maps any
+            # agreement_fraction <= 0.5 to agreement_score=0.0 -- a many-
+            # to-one collapse -- so reconstructing from that score always
+            # produced exactly 0.5, silently misreporting every true value
+            # below 0.5 as "borderline 50/50" instead of "most models
+            # actively disagreed with the pick". decision.agreement_fraction
+            # is set earlier in engine.py directly from the ensemble result
+            # (see _pending_agreement in engine.py, which correctly feeds
+            # agreement_calibration.py's tracker from the same source) --
+            # use that instead of round-tripping through the lossy score.
+            agreement_fraction=decision.agreement_fraction,
             min_agreement_fraction=self.min_agreement_fraction)
         decision.gates.extend(hard.trail)
 
