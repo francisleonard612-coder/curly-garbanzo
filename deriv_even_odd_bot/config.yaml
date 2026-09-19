@@ -115,7 +115,7 @@ risk:
   # FIXED currency amount. Never a percentage of balance at this layer --
   # see the 527x incident documented in app/risk/staking.py.
   base_stake: 0.35
-  max_stake: 1.0
+  max_stake: 6.0
   max_daily_loss: 25.0
   max_drawdown: 50.0
   max_consecutive_losses: 8
@@ -126,7 +126,7 @@ risk:
   # cumulative loss for the same per-trade edge. 20/day is a starting point,
   # not a derived number; tune it directly.
   max_trades_per_day: 2000
-  max_concurrent_trades: 1
+  max_concurrent_trades: 3
   # 300s = one trade at most every 5 minutes, same reasoning as
   # max_trades_per_day above. The two stack: whichever limit is hit first
   # stops that tick from trading.
@@ -158,12 +158,12 @@ staking:
   # stake at step n = base_stake * martingale_factor**n. 2.0 is classic
   # doubling -- at a 1.95x payout it recovers the prior stake and overshoots
   # into a small profit rather than exactly breaking even.
-  martingale_factor: 1.17
+  martingale_factor: 2.1
   # Escalation stops here (still subject to max_stake) and HOLDS rather than
   # resetting -- a win is what resets the streak, not reaching this ceiling.
   # Keep this well below risk.max_consecutive_losses (the hard trading
   # stop), or the escalation ceiling and the hard stop engage together.
-  martingale_max_steps: 3
+  martingale_max_steps: 6
   kelly_fraction: 0.25
 
 storage:
